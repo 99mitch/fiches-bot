@@ -56,10 +56,12 @@ def insert_fiches(rows: list[dict], db_path: str = DB_PATH) -> int:
 def search_fiches(query: str, db_path: str = DB_PATH) -> list[dict]:
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    cur = con.execute(
-        "SELECT * FROM fiches WHERE nom COLLATE NOCASE = ? OR prenom COLLATE NOCASE = ? OR numero = ? OR email COLLATE NOCASE = ? LIMIT 10",
-        (query, query, query, query),
-    )
+    words = query.split()
+    # Each word must match at least one field (AND between words, OR between fields)
+    per_word = "(nom COLLATE NOCASE = ? OR prenom COLLATE NOCASE = ? OR numero = ? OR email COLLATE NOCASE = ?)"
+    conditions = " AND ".join(per_word for _ in words)
+    params = [w for w in words for _ in range(4)]
+    cur = con.execute(f"SELECT * FROM fiches WHERE {conditions} LIMIT 10", params)
     rows = [dict(r) for r in cur.fetchall()]
     con.close()
     return rows

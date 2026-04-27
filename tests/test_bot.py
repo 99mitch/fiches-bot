@@ -95,6 +95,24 @@ def test_insert_multiple_rows(db):
     assert len(search_fiches("Bob", db)) == 1
 
 
+def test_search_multiword_nom_prenom(db):
+    rows = [parse_line("Mattolini,Nicole,0629330804,,,,,nikky@ex.com,,")]
+    insert_fiches(rows, db)
+    assert len(search_fiches("mattolini nicole", db)) == 1
+    assert len(search_fiches("NICOLE MATTOLINI", db)) == 1
+    assert len(search_fiches("mattolini", db)) == 1
+
+
+def test_search_multiword_no_cross_match(db):
+    rows = [
+        parse_line("Dupont,Jean,,,,,,,, "),
+        parse_line("Martin,Alice,,,,,,,, "),
+    ]
+    insert_fiches(rows, db)
+    # "dupont alice" should match nothing (no single row has both)
+    assert len(search_fiches("dupont alice", db)) == 0
+
+
 def test_format_fiche_full():
     row = {
         "id": 1, "nom": "Dupont", "prenom": "Jean", "numero": "0612345678",
