@@ -55,3 +55,20 @@ def search_fiches(query: str, db_path: str = DB_PATH) -> list[dict]:
     rows = [dict(r) for r in cur.fetchall()]
     con.close()
     return rows
+
+
+_LABELS = {
+    "nom": "Nom", "prenom": "Prénom", "numero": "Numéro",
+    "date_naissance": "Date de naissance", "adresse": "Adresse",
+    "code_postal": "Code postal", "ville": "Ville",
+    "email": "Email", "iban": "IBAN", "bic": "BIC",
+}
+
+
+def format_fiche(row: dict) -> str:
+    lines = [
+        f"{label} : {row[col]}"
+        for col, label in _LABELS.items()
+        if row.get(col)
+    ]
+    return "\n".join(lines)

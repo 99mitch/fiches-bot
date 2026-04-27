@@ -93,3 +93,29 @@ def test_insert_multiple_rows(db):
     insert_fiches(rows, db)
     assert len(search_fiches("Martin", db)) == 1
     assert len(search_fiches("Bob", db)) == 1
+
+
+from bot import format_fiche
+
+
+def test_format_fiche_full():
+    row = {
+        "id": 1, "nom": "Dupont", "prenom": "Jean", "numero": "0612345678",
+        "date_naissance": "01/01/1990", "adresse": "12 rue de la Paix",
+        "code_postal": "75001", "ville": "Paris", "email": "jean@ex.com",
+        "iban": "FR76xxx", "bic": "BNPA",
+    }
+    result = format_fiche(row)
+    assert "Nom : Dupont" in result
+    assert "Prénom : Jean" in result
+    assert "Email : jean@ex.com" in result
+
+
+def test_format_fiche_skips_empty():
+    row = {col: "" for col in COLUMNS}
+    row["id"] = 1
+    row["nom"] = "Martin"
+    result = format_fiche(row)
+    assert "Nom : Martin" in result
+    assert "Prénom" not in result
+    assert "Email" not in result
