@@ -17,7 +17,7 @@ from telegram.ext import (
 load_dotenv()
 
 DB_PATH = "fiches.db"
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_IDS = [int(i) for i in os.getenv("ADMIN_ID", "").split(",") if i.strip()]
 COLUMNS = [
     "nom", "prenom", "numero", "date_naissance",
     "adresse", "code_postal", "ville", "email", "iban", "bic",
@@ -111,10 +111,11 @@ async def _do_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: 
         return
     parts = [f"{color} Fiche #{i} — {mention}\n{format_fiche(row)}" for i, row in enumerate(results, 1)]
     await update.message.reply_text("\n\n".join(parts))
-    if ADMIN_ID:
+    if ADMIN_IDS:
         now = datetime.now().strftime("%d/%m/%Y à %H:%M:%S")
         notif = f"🔔 {mention} a sorti {len(results)} fiche(s) pour « {query} »\n🕐 {now}\n\n" + "\n\n".join(parts)
-        await context.bot.send_message(chat_id=ADMIN_ID, text=notif)
+        for admin_id in ADMIN_IDS:
+            await context.bot.send_message(chat_id=admin_id, text=notif)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
