@@ -66,11 +66,23 @@ def search_fiches(query: str, db_path: str = DB_PATH) -> list[dict]:
 
 
 _LABELS = {
-    "nom": "Nom", "prenom": "Prénom", "numero": "Numéro",
-    "date_naissance": "Date de naissance", "adresse": "Adresse",
-    "code_postal": "Code postal", "ville": "Ville",
-    "email": "Email", "iban": "IBAN", "bic": "BIC",
+    "nom": "👤 Nom",
+    "prenom": "👤 Prénom",
+    "numero": "📞 Numéro",
+    "date_naissance": "🎂 Date de naissance",
+    "adresse": "🏠 Adresse",
+    "code_postal": "📮 Code postal",
+    "ville": "🏙️ Ville",
+    "email": "📧 Email",
+    "iban": "🏦 IBAN",
+    "bic": "🏦 BIC",
 }
+
+_USER_COLORS = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "🩷", "🩵", "🩶"]
+
+
+def user_color(user_id: int) -> str:
+    return _USER_COLORS[user_id % len(_USER_COLORS)]
 
 
 def format_fiche(row: dict) -> str:
@@ -82,19 +94,32 @@ def format_fiche(row: dict) -> str:
     return "\n".join(lines)
 
 
+async def _do_search(update: Update, query: str) -> None:
+    color = user_color(update.effective_user.id)
+    results = search_fiches(query)
+    if not results:
+        await update.message.reply_text("🔍 Aucune fiche trouvée.")
+        return
+    parts = [f"{color} Fiche #{i}\n{format_fiche(row)}" for i, row in enumerate(results, 1)]
+    await update.message.reply_text("\n\n".join(parts))
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.args:
+        await _do_search(update, " ".join(context.args))
+        return
     await update.message.reply_text(
-        "Bienvenue !\n\n"
-        "Envoie un fichier .txt pour importer des fiches.\n"
+        "👋 Bienvenue !\n\n"
+        "📁 Envoie un fichier .txt pour importer des fiches.\n"
         "Format : nom,prenom,numero,date_naissance,adresse,code_postal,ville,email,iban,bic\n\n"
-        "Tape un nom, prenom, numero ou email pour rechercher une fiche."
+        "🔍 Tape /start <nom|prénom|numéro|email> pour rechercher une fiche."
     )
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     doc = update.message.document
     if not doc.file_name.endswith(".txt"):
-        await update.message.reply_text("Merci d'envoyer un fichier .txt")
+        await update.message.reply_text("❌ Merci d'envoyer un fichier .txt")
         return
     tg_file = await doc.get_file()
     content = await tg_file.download_as_bytearray()
@@ -114,22 +139,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as e:
         import sys
         print(f"DB error: {e}", file=sys.stderr)
-        await update.message.reply_text("Erreur lors de l'import. Réessaie plus tard.")
+        await update.message.reply_text("❌ Erreur lors de l'import. Réessaie plus tard.")
         return
-    msg = f"{inserted} fiche(s) importée(s)."
+    msg = f"✅ {inserted} fiche(s) importée(s)."
     if skipped:
-        msg += f"\n{skipped} ligne(s) ignorée(s)."
+        msg += f"\n⚠️ {skipped} ligne(s) ignorée(s)."
     await update.message.reply_text(msg)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.message.text.strip()
-    results = search_fiches(query)
-    if not results:
-        await update.message.reply_text("Aucune fiche trouvée.")
-        return
-    parts = [f"--- Fiche #{i} ---\n{format_fiche(row)}" for i, row in enumerate(results, 1)]
-    await update.message.reply_text("\n\n".join(parts))
+    await _do_search(update, update.message.text.strip())
 
 
 def main() -> None:
