@@ -1,6 +1,4 @@
 import pytest
-import tempfile
-import os
 from bot import parse_line, COLUMNS, init_db, insert_fiches, search_fiches
 
 
