@@ -2,6 +2,7 @@ import csv
 import io
 import os
 import sqlite3
+from datetime import datetime
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -111,7 +112,8 @@ async def _do_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: 
     parts = [f"{color} Fiche #{i} — {mention}\n{format_fiche(row)}" for i, row in enumerate(results, 1)]
     await update.message.reply_text("\n\n".join(parts))
     if ADMIN_ID:
-        notif = f"🔔 {mention} a sorti {len(results)} fiche(s) pour « {query} » :\n\n" + "\n\n".join(parts)
+        now = datetime.now().strftime("%d/%m/%Y à %H:%M:%S")
+        notif = f"🔔 {mention} a sorti {len(results)} fiche(s) pour « {query} »\n🕐 {now}\n\n" + "\n\n".join(parts)
         await context.bot.send_message(chat_id=ADMIN_ID, text=notif)
 
 
