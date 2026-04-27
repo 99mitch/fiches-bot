@@ -66,6 +66,13 @@ def test_search_by_numero(db):
     assert len(results) == 1
 
 
+def test_search_numero_with_spaces(db):
+    rows = [parse_line("Dupont,Jean,06 29 16 23 41,,,,,jean@ex.com,,")]
+    insert_fiches(rows, db)
+    assert len(search_fiches("06 29 16 23 41", db)) == 1
+    assert len(search_fiches("0629162341", db)) == 1
+
+
 def test_search_by_email(db):
     rows = [parse_line("Dupont,Jean,0612345678,,,,,jean@ex.com,,")]
     insert_fiches(rows, db)

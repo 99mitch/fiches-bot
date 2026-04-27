@@ -57,11 +57,14 @@ def search_fiches(query: str, db_path: str = DB_PATH) -> list[dict]:
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     words = query.split()
-    # Each word must match at least one field (AND between words, OR between fields)
-    per_word = "(nom COLLATE NOCASE = ? OR prenom COLLATE NOCASE = ? OR numero = ? OR email COLLATE NOCASE = ?)"
-    conditions = " AND ".join(per_word for _ in words)
-    params = [w for w in words for _ in range(4)]
-    cur = con.execute(f"SELECT * FROM fiches WHERE {conditions} LIMIT 10", params)
+    normalized = query.replace(" ", "")
+    # Each word must match nom, prenom, or email (AND between words)
+    per_word = "(nom COLLATE NOCASE = ? OR prenom COLLATE NOCASE = ? OR email COLLATE NOCASE = ?)"
+    word_clause = " AND ".join(per_word for _ in words)
+    word_params = [w for w in words for _ in range(3)]
+    # Numero: compare full query (spaces stripped) against stored value (spaces stripped)
+    sql = f"SELECT * FROM fiches WHERE ({word_clause}) OR REPLACE(numero, ' ', '') = ? LIMIT 10"
+    cur = con.execute(sql, word_params + [normalized])
     rows = [dict(r) for r in cur.fetchall()]
     con.close()
     return rows
