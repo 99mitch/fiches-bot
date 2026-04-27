@@ -16,6 +16,7 @@ from telegram.ext import (
 load_dotenv()
 
 DB_PATH = "fiches.db"
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 COLUMNS = [
     "nom", "prenom", "numero", "date_naissance",
     "adresse", "code_postal", "ville", "email", "iban", "bic",
@@ -99,7 +100,7 @@ def format_fiche(row: dict) -> str:
     return "\n".join(lines)
 
 
-async def _do_search(update: Update, query: str) -> None:
+async def _do_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str) -> None:
     user = update.effective_user
     color = user_color(user.id)
     mention = f"@{user.username}" if user.username else user.first_name
@@ -109,11 +110,14 @@ async def _do_search(update: Update, query: str) -> None:
         return
     parts = [f"{color} Fiche #{i} — {mention}\n{format_fiche(row)}" for i, row in enumerate(results, 1)]
     await update.message.reply_text("\n\n".join(parts))
+    if ADMIN_ID:
+        notif = f"🔔 {mention} a sorti {len(results)} fiche(s) pour « {query} » :\n\n" + "\n\n".join(parts)
+        await context.bot.send_message(chat_id=ADMIN_ID, text=notif)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.args:
-        await _do_search(update, " ".join(context.args))
+        await _do_search(update, context, " ".join(context.args))
         return
     await update.message.reply_text(
         "👋 Bienvenue !\n\n"
@@ -155,7 +159,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _do_search(update, update.message.text.strip())
+    await _do_search(update, context, update.message.text.strip())
 
 
 def main() -> None:
