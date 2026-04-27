@@ -97,12 +97,14 @@ def format_fiche(row: dict) -> str:
 
 
 async def _do_search(update: Update, query: str) -> None:
-    color = user_color(update.effective_user.id)
+    user = update.effective_user
+    color = user_color(user.id)
+    mention = f"@{user.username}" if user.username else user.first_name
     results = search_fiches(query)
     if not results:
         await update.message.reply_text("🔍 Aucune fiche trouvée.")
         return
-    parts = [f"{color} Fiche #{i}\n{format_fiche(row)}" for i, row in enumerate(results, 1)]
+    parts = [f"{color} Fiche #{i} — {mention}\n{format_fiche(row)}" for i, row in enumerate(results, 1)]
     await update.message.reply_text("\n\n".join(parts))
 
 
