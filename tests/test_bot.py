@@ -1,5 +1,5 @@
 import pytest
-from bot import parse_line, COLUMNS, init_db, insert_fiches, search_fiches
+from bot import parse_line, COLUMNS, init_db, insert_fiches, search_fiches, format_fiche
 
 
 def test_parse_line_full():
@@ -93,9 +93,6 @@ def test_insert_multiple_rows(db):
     insert_fiches(rows, db)
     assert len(search_fiches("Martin", db)) == 1
     assert len(search_fiches("Bob", db)) == 1
-
-
-from bot import format_fiche
 
 
 def test_format_fiche_full():

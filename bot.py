@@ -57,7 +57,7 @@ def search_fiches(query: str, db_path: str = DB_PATH) -> list[dict]:
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     cur = con.execute(
-        "SELECT * FROM fiches WHERE nom COLLATE NOCASE = ? OR prenom COLLATE NOCASE = ? OR numero = ? OR email COLLATE NOCASE = ?",
+        "SELECT * FROM fiches WHERE nom COLLATE NOCASE = ? OR prenom COLLATE NOCASE = ? OR numero = ? OR email COLLATE NOCASE = ? LIMIT 10",
         (query, query, query, query),
     )
     rows = [dict(r) for r in cur.fetchall()]
@@ -109,10 +109,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             rows.append(parse_line(line))
         except Exception:
             skipped += 1
-    inserted = insert_fiches(rows)
-    msg = f"{inserted} fiche(s) importee(s)."
+    try:
+        inserted = insert_fiches(rows)
+    except Exception as e:
+        import sys
+        print(f"DB error: {e}", file=sys.stderr)
+        await update.message.reply_text("Erreur lors de l'import. Réessaie plus tard.")
+        return
+    msg = f"{inserted} fiche(s) importée(s)."
     if skipped:
-        msg += f"\n{skipped} ligne(s) ignoree(s)."
+        msg += f"\n{skipped} ligne(s) ignorée(s)."
     await update.message.reply_text(msg)
 
 
@@ -120,7 +126,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     query = update.message.text.strip()
     results = search_fiches(query)
     if not results:
-        await update.message.reply_text("Aucune fiche trouvee.")
+        await update.message.reply_text("Aucune fiche trouvée.")
         return
     parts = [f"--- Fiche #{i} ---\n{format_fiche(row)}" for i, row in enumerate(results, 1)]
     await update.message.reply_text("\n\n".join(parts))
