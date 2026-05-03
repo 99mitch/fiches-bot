@@ -19,7 +19,13 @@ from telegram.ext import (
 
 load_dotenv()
 
-DB_PATH = "fiches.db"
+DB_DIR = os.getenv("DB_DIR", ".")
+
+
+def chat_db(chat_id: int) -> str:
+    path = os.path.join(DB_DIR, f"fiches_{chat_id}.db")
+    init_db(path)
+    return path
 ADMIN_IDS = [int(i) for i in os.getenv("ADMIN_ID", "").split(",") if i.strip()]
 COLUMNS = [
     "nom", "prenom", "numero", "date_naissance",
@@ -33,7 +39,7 @@ def parse_line(line: str) -> dict:
     return {col: (fields[i].strip() if i < len(fields) else "") for i, col in enumerate(COLUMNS)}
 
 
-def init_db(db_path: str = DB_PATH) -> None:
+def init_db(db_path: str = "fiches.db") -> None:
     con = sqlite3.connect(db_path)
     con.execute(
         f"""CREATE TABLE IF NOT EXISTS fiches (
@@ -45,7 +51,7 @@ def init_db(db_path: str = DB_PATH) -> None:
     con.close()
 
 
-def insert_fiches(rows: list[dict], db_path: str = DB_PATH) -> int:
+def insert_fiches(rows: list[dict], db_path: str = "fiches.db") -> int:
     con = sqlite3.connect(db_path)
     placeholders = ", ".join("?" for _ in COLUMNS)
     con.executemany(
@@ -58,7 +64,7 @@ def insert_fiches(rows: list[dict], db_path: str = DB_PATH) -> int:
     return count
 
 
-def search_fiches(query: str, db_path: str = DB_PATH) -> list[dict]:
+def search_fiches(query: str, db_path: str = "fiches.db") -> list[dict]:
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     words = query.split()
@@ -117,7 +123,8 @@ async def _do_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: 
     user = update.effective_user
     color = user_color(user.id)
     mention = f"@{user.username}" if user.username else user.first_name
-    results = search_fiches(query)
+    db = chat_db(update.effective_chat.id)
+    results = search_fiches(query, db)
     if not results:
         await update.message.reply_text("🔍 Aucune fiche trouvée.")
         return
@@ -247,7 +254,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception:
             skipped += 1
     try:
-        inserted = insert_fiches(rows)
+        inserted = insert_fiches(rows, chat_db(update.effective_chat.id))
     except Exception as e:
         import sys
         print(f"DB error: {e}", file=sys.stderr)
@@ -264,7 +271,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 def main() -> None:
-    init_db()
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN manquant dans .env")
