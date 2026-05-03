@@ -197,7 +197,10 @@ async def fiches_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def handle_fiches_viewer(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, target_chat_id: int | None = None
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    target_chat_id: int | None = None,
+    allowed_users: list[int] | None = None,
 ) -> None:
     doc = update.message.document
     if not doc.file_name.endswith(".txt"):
@@ -221,7 +224,7 @@ async def handle_fiches_viewer(
     total = len(fiches)
     fiche_text = f"📋 Fiche 1/{total}\n\n{format_fiche(fiches[0])}"
     keyboard = _viewer_keyboard(0, total)
-    session = {"fiches": fiches, "index": 0}
+    session = {"fiches": fiches, "index": 0, "allowed": allowed_users or []}
     if target_chat_id:
         try:
             await context.bot.send_message(
@@ -245,6 +248,10 @@ async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_T
         context.chat_data["fv"] = session
     if not session:
         await query.edit_message_text("❌ Session expirée. Renvoie le fichier avec la légende /fiches.")
+        return
+    allowed = session.get("allowed", [])
+    if allowed and query.from_user.id not in allowed:
+        await query.answer("🚫 Tu n'as pas accès à la navigation.", show_alert=True)
         return
     fiches = session["fiches"]
     total = len(fiches)
@@ -277,15 +284,20 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     caption_raw = (update.message.caption or "").strip()
     caption_cmd = caption_raw.lower().split("@")[0].split()[0] if caption_raw else ""
     if caption_cmd == "/fiches":
-        parts = caption_raw.split()
+        parts = caption_raw.split()[1:]  # drop "/fiches"
         target_chat_id = None
-        if len(parts) >= 2:
+        allowed_users: list[int] = []
+        for part in parts:
             try:
-                target_chat_id = int(parts[1])
+                val = int(part)
+                if val < 0:
+                    target_chat_id = val
+                else:
+                    allowed_users.append(val)
             except ValueError:
-                await update.message.reply_text("❌ Chat ID invalide. Exemple : /fiches -100123456789")
+                await update.message.reply_text(f"❌ Valeur invalide : {part}")
                 return
-        await handle_fiches_viewer(update, context, target_chat_id)
+        await handle_fiches_viewer(update, context, target_chat_id, allowed_users)
         return
     if not doc.file_name.endswith(".txt"):
         await update.message.reply_text("❌ Merci d'envoyer un fichier .txt")
