@@ -181,7 +181,9 @@ async def fiches_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
 
 
-async def handle_fiches_viewer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_fiches_viewer(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, target_chat_id: int | None = None
+) -> None:
     doc = update.message.document
     if not doc.file_name.endswith(".txt"):
         await update.message.reply_text("❌ Merci d'envoyer un fichier .txt")
@@ -201,10 +203,21 @@ async def handle_fiches_viewer(update: Update, context: ContextTypes.DEFAULT_TYP
     if not fiches:
         await update.message.reply_text("❌ Aucune fiche dans ce fichier.")
         return
-    context.chat_data["fv"] = {"fiches": fiches, "index": 0}
     total = len(fiches)
-    text = f"📋 Fiche 1/{total}\n\n{format_fiche(fiches[0])}"
-    await update.message.reply_text(text, reply_markup=_viewer_keyboard(0, total))
+    fiche_text = f"📋 Fiche 1/{total}\n\n{format_fiche(fiches[0])}"
+    keyboard = _viewer_keyboard(0, total)
+    if target_chat_id:
+        try:
+            sent = await context.bot.send_message(
+                chat_id=target_chat_id, text=fiche_text, reply_markup=keyboard
+            )
+            context.application.chat_data.setdefault(target_chat_id, {})["fv"] = {"fiches": fiches, "index": 0}
+            await update.message.reply_text(f"✅ {total} fiche(s) envoyée(s) au groupe {target_chat_id}.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Impossible d'envoyer au groupe {target_chat_id} : {e}")
+    else:
+        context.chat_data["fv"] = {"fiches": fiches, "index": 0}
+        await update.message.reply_text(fiche_text, reply_markup=keyboard)
 
 
 async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -233,9 +246,18 @@ async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     doc = update.message.document
-    caption = (update.message.caption or "").strip().lower().split("@")[0]
-    if caption == "/fiches":
-        await handle_fiches_viewer(update, context)
+    caption_raw = (update.message.caption or "").strip()
+    caption_cmd = caption_raw.lower().split("@")[0].split()[0] if caption_raw else ""
+    if caption_cmd == "/fiches":
+        parts = caption_raw.split()
+        target_chat_id = None
+        if len(parts) >= 2:
+            try:
+                target_chat_id = int(parts[1])
+            except ValueError:
+                await update.message.reply_text("❌ Chat ID invalide. Exemple : /fiches -100123456789")
+                return
+        await handle_fiches_viewer(update, context, target_chat_id)
         return
     if not doc.file_name.endswith(".txt"):
         await update.message.reply_text("❌ Merci d'envoyer un fichier .txt")
