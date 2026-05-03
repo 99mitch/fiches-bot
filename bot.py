@@ -6,9 +6,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -102,6 +103,15 @@ def format_fiche(row: dict) -> str:
     return "\n".join(lines)
 
 
+def _viewer_keyboard(index: int, total: int) -> InlineKeyboardMarkup:
+    row = []
+    if index > 0:
+        row.append(InlineKeyboardButton("◀ Précédente", callback_data="fv_prev"))
+    if index < total - 1:
+        row.append(InlineKeyboardButton("Suivante ▶", callback_data="fv_next"))
+    return InlineKeyboardMarkup([row])
+
+
 async def _do_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str) -> None:
     user = update.effective_user
     color = user_color(user.id)
@@ -127,8 +137,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "👋 Bienvenue !\n\n"
         "📁 Envoie un fichier .txt pour importer des fiches.\n"
         "Format : nom,prenom,numero,date_naissance,adresse,code_postal,ville,email,iban,bic\n\n"
-        "🔍 /fiche <nom|prénom|numéro|email> — rechercher une fiche (fonctionne dans les groupes)\n"
+        "🔍 /fiche <nom|prénom|numéro|email> — rechercher une fiche\n"
         "📦 /bulk nom1 nom2 nom3 — rechercher plusieurs noms à la suite\n"
+        "📋 Envoie un .txt avec la légende /fiches — parcourir les fiches avec ◀ ▶\n"
         "💬 Tape directement un texte pour rechercher."
     )
 
@@ -145,11 +156,65 @@ async def bulk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("📦 Usage : /bulk nom1 nom2 nom3 ...")
         return
     for name in context.args:
-        await _do_search(update, context, name)
+        try:
+            await _do_search(update, context, name)
+        except Exception as e:
+            import sys
+            print(f"bulk error for '{name}': {e}", file=sys.stderr)
+            await update.message.reply_text(f"❌ Erreur pour « {name} ».")
+
+
+async def handle_fiches_viewer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    doc = update.message.document
+    if not doc.file_name.endswith(".txt"):
+        await update.message.reply_text("❌ Merci d'envoyer un fichier .txt")
+        return
+    tg_file = await doc.get_file()
+    content = await tg_file.download_as_bytearray()
+    text = content.decode("utf-8", errors="replace")
+    fiches = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            fiches.append(parse_line(line))
+        except Exception:
+            pass
+    if not fiches:
+        await update.message.reply_text("❌ Aucune fiche dans ce fichier.")
+        return
+    context.user_data["fv"] = {"fiches": fiches, "index": 0}
+    total = len(fiches)
+    text = f"📋 Fiche 1/{total}\n\n{format_fiche(fiches[0])}"
+    await update.message.reply_text(text, reply_markup=_viewer_keyboard(0, total))
+
+
+async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    session = context.user_data.get("fv")
+    if not session:
+        await query.edit_message_text("❌ Session expirée. Renvoie le fichier avec la légende /fiches.")
+        return
+    fiches = session["fiches"]
+    total = len(fiches)
+    index = session["index"]
+    if query.data == "fv_prev":
+        index = max(0, index - 1)
+    elif query.data == "fv_next":
+        index = min(total - 1, index + 1)
+    session["index"] = index
+    text = f"📋 Fiche {index + 1}/{total}\n\n{format_fiche(fiches[index])}"
+    await query.edit_message_text(text, reply_markup=_viewer_keyboard(index, total))
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     doc = update.message.document
+    caption = (update.message.caption or "").strip()
+    if caption.startswith("/fiches"):
+        await handle_fiches_viewer(update, context)
+        return
     if not doc.file_name.endswith(".txt"):
         await update.message.reply_text("❌ Merci d'envoyer un fichier .txt")
         return
@@ -192,6 +257,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("fiche", fiche))
     app.add_handler(CommandHandler("bulk", bulk))
+    app.add_handler(CallbackQueryHandler(handle_fiches_callback, pattern="^fv_(prev|next)$"))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling()
