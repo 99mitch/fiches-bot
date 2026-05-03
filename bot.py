@@ -13,6 +13,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    PicklePersistence,
     filters,
 )
 
@@ -193,7 +194,7 @@ async def handle_fiches_viewer(update: Update, context: ContextTypes.DEFAULT_TYP
     if not fiches:
         await update.message.reply_text("❌ Aucune fiche dans ce fichier.")
         return
-    context.user_data["fv"] = {"fiches": fiches, "index": 0}
+    context.chat_data["fv"] = {"fiches": fiches, "index": 0}
     total = len(fiches)
     text = f"📋 Fiche 1/{total}\n\n{format_fiche(fiches[0])}"
     await update.message.reply_text(text, reply_markup=_viewer_keyboard(0, total))
@@ -202,7 +203,7 @@ async def handle_fiches_viewer(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    session = context.user_data.get("fv")
+    session = context.chat_data.get("fv")
     if not session:
         await query.edit_message_text("❌ Session expirée. Renvoie le fichier avec la légende /fiches.")
         return
@@ -215,7 +216,12 @@ async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_T
         index = min(total - 1, index + 1)
     session["index"] = index
     text = f"📋 Fiche {index + 1}/{total}\n\n{format_fiche(fiches[index])}"
-    await query.edit_message_text(text, reply_markup=_viewer_keyboard(index, total))
+    if len(text) > 4096:
+        text = text[:4090] + "\n…"
+    try:
+        await query.edit_message_text(text, reply_markup=_viewer_keyboard(index, total))
+    except Exception:
+        await query.answer("⚠️ Erreur d'affichage.", show_alert=True)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -262,7 +268,8 @@ def main() -> None:
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN manquant dans .env")
-    app = Application.builder().token(token).build()
+    persistence = PicklePersistence(filepath="bot_persistence.pkl")
+    app = Application.builder().token(token).persistence(persistence).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("fiche", fiche))
     app.add_handler(CommandHandler("bulk", bulk))
