@@ -220,6 +220,10 @@ async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     doc = update.message.document
+    caption = (update.message.caption or "").strip().lower().split("@")[0]
+    if caption == "/fiches":
+        await handle_fiches_viewer(update, context)
+        return
     if not doc.file_name.endswith(".txt"):
         await update.message.reply_text("❌ Merci d'envoyer un fichier .txt")
         return
