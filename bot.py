@@ -164,6 +164,15 @@ async def bulk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(f"❌ Erreur pour « {name} ».")
 
 
+async def fiches_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message.document:
+        await handle_fiches_viewer(update, context)
+    else:
+        await update.message.reply_text(
+            "📋 Envoie un fichier .txt avec la légende /fiches pour parcourir les fiches une par une."
+        )
+
+
 async def handle_fiches_viewer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     doc = update.message.document
     if not doc.file_name.endswith(".txt"):
@@ -211,10 +220,6 @@ async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     doc = update.message.document
-    caption = (update.message.caption or "").strip()
-    if caption.startswith("/fiches"):
-        await handle_fiches_viewer(update, context)
-        return
     if not doc.file_name.endswith(".txt"):
         await update.message.reply_text("❌ Merci d'envoyer un fichier .txt")
         return
@@ -257,6 +262,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("fiche", fiche))
     app.add_handler(CommandHandler("bulk", bulk))
+    app.add_handler(CommandHandler("fiches", fiches_cmd))
     app.add_handler(CallbackQueryHandler(handle_fiches_callback, pattern="^fv_(prev|next)$"))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
