@@ -127,8 +127,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "👋 Bienvenue !\n\n"
         "📁 Envoie un fichier .txt pour importer des fiches.\n"
         "Format : nom,prenom,numero,date_naissance,adresse,code_postal,ville,email,iban,bic\n\n"
-        "🔍 Tape /start <nom|prénom|numéro|email> pour rechercher une fiche."
+        "🔍 /fiche <nom|prénom|numéro|email> — rechercher une fiche (fonctionne dans les groupes)\n"
+        "📦 /bulk nom1 nom2 nom3 — rechercher plusieurs noms à la suite\n"
+        "💬 Tape directement un texte pour rechercher."
     )
+
+
+async def fiche(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("🔍 Usage : /fiche <nom|prénom|numéro|email>")
+        return
+    await _do_search(update, context, " ".join(context.args))
+
+
+async def bulk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("📦 Usage : /bulk nom1 nom2 nom3 ...")
+        return
+    for name in context.args:
+        await _do_search(update, context, name)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -173,6 +190,8 @@ def main() -> None:
         raise RuntimeError("BOT_TOKEN manquant dans .env")
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("fiche", fiche))
+    app.add_handler(CommandHandler("bulk", bulk))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling()
