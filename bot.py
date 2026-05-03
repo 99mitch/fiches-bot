@@ -111,12 +111,17 @@ def format_fiche(row: dict) -> str:
 
 
 def _viewer_keyboard(index: int, total: int) -> InlineKeyboardMarkup:
-    row = []
+    nav = []
     if index > 0:
-        row.append(InlineKeyboardButton("◀ Précédente", callback_data="fv_prev"))
+        nav.append(InlineKeyboardButton("◀ Précédente", callback_data="fv_prev"))
     if index < total - 1:
-        row.append(InlineKeyboardButton("Suivante ▶", callback_data="fv_next"))
-    return InlineKeyboardMarkup([row])
+        nav.append(InlineKeyboardButton("Suivante ▶", callback_data="fv_next"))
+    delete_row = [InlineKeyboardButton("🗑️ Supprimer", callback_data="fv_del")]
+    rows = []
+    if nav:
+        rows.append(nav)
+    rows.append(delete_row)
+    return InlineKeyboardMarkup(rows)
 
 
 async def _do_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str) -> None:
@@ -170,6 +175,16 @@ async def bulk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             import sys
             print(f"bulk error for '{name}': {e}", file=sys.stderr)
             await update.message.reply_text(f"❌ Erreur pour « {name} ».")
+
+
+async def clearfiches(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db = chat_db(update.effective_chat.id)
+    con = sqlite3.connect(db)
+    con.execute("DELETE FROM fiches")
+    count = con.total_changes
+    con.commit()
+    con.close()
+    await update.message.reply_text(f"🗑️ {count} fiche(s) supprimée(s) de ce groupe.")
 
 
 async def fiches_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -234,11 +249,20 @@ async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_T
     fiches = session["fiches"]
     total = len(fiches)
     index = session["index"]
-    if query.data == "fv_prev":
+    if query.data == "fv_del":
+        fiches.pop(index)
+        total -= 1
+        if total == 0:
+            session.clear()
+            await query.edit_message_text("✅ Toutes les fiches ont été supprimées.")
+            return
+        index = min(index, total - 1)
+    elif query.data == "fv_prev":
         index = max(0, index - 1)
     elif query.data == "fv_next":
         index = min(total - 1, index + 1)
     session["index"] = index
+    session["fiches"] = fiches
     text = f"📋 Fiche {index + 1}/{total}\n\n{format_fiche(fiches[index])}"
     if len(text) > 4096:
         text = text[:4090] + "\n…"
@@ -306,7 +330,8 @@ def main() -> None:
     app.add_handler(CommandHandler("fiche", fiche))
     app.add_handler(CommandHandler("bulk", bulk))
     app.add_handler(CommandHandler("fiches", fiches_cmd))
-    app.add_handler(CallbackQueryHandler(handle_fiches_callback, pattern="^fv_(prev|next)$"))
+    app.add_handler(CommandHandler("clearfiches", clearfiches))
+    app.add_handler(CallbackQueryHandler(handle_fiches_callback, pattern="^fv_(prev|next|del)$"))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling()
