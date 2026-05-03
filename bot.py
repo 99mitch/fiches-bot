@@ -206,24 +206,28 @@ async def handle_fiches_viewer(
     total = len(fiches)
     fiche_text = f"📋 Fiche 1/{total}\n\n{format_fiche(fiches[0])}"
     keyboard = _viewer_keyboard(0, total)
+    session = {"fiches": fiches, "index": 0}
     if target_chat_id:
         try:
-            sent = await context.bot.send_message(
+            await context.bot.send_message(
                 chat_id=target_chat_id, text=fiche_text, reply_markup=keyboard
             )
-            context.application.chat_data.setdefault(target_chat_id, {})["fv"] = {"fiches": fiches, "index": 0}
+            context.bot_data.setdefault("fv", {})[target_chat_id] = session
             await update.message.reply_text(f"✅ {total} fiche(s) envoyée(s) au groupe {target_chat_id}.")
         except Exception as e:
             await update.message.reply_text(f"❌ Impossible d'envoyer au groupe {target_chat_id} : {e}")
     else:
-        context.chat_data["fv"] = {"fiches": fiches, "index": 0}
+        context.chat_data["fv"] = session
         await update.message.reply_text(fiche_text, reply_markup=keyboard)
 
 
 async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    session = context.chat_data.get("fv")
+    chat_id = update.effective_chat.id
+    session = context.chat_data.get("fv") or context.bot_data.get("fv", {}).get(chat_id)
+    if session and "fv" not in context.chat_data:
+        context.chat_data["fv"] = session
     if not session:
         await query.edit_message_text("❌ Session expirée. Renvoie le fichier avec la légende /fiches.")
         return
