@@ -124,6 +124,19 @@ def _viewer_keyboard(index: int, total: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def _search_session(fiches: list[dict], query: str) -> list[tuple[int, dict]]:
+    q = query.lower().strip()
+    q_no_space = q.replace(" ", "")
+    results = []
+    for i, f in enumerate(fiches):
+        num = (f.get("numero") or "").replace(" ", "")
+        nom = (f.get("nom") or "").lower()
+        prenom = (f.get("prenom") or "").lower()
+        if num == q_no_space or q in nom or q in prenom or q in f"{nom} {prenom}" or q in f"{prenom} {nom}":
+            results.append((i, f))
+    return results
+
+
 async def _do_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str) -> None:
     user = update.effective_user
     color = user_color(user.id)
@@ -150,7 +163,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "👋 Bienvenue !\n\n"
         "📁 Envoie un fichier .txt pour importer des fiches.\n"
         "Format : nom,prenom,numero,date_naissance,adresse,code_postal,ville,email,iban,bic\n\n"
-        "🔍 /fiche <nom|prénom|numéro|email> — rechercher une fiche\n"
+        "🔍 /fiche <nom|prénom|numéro|email> — rechercher une fiche (base)\n"
+        "🔎 /search <nom|numéro> — retrouver une fiche chargée dans ce groupe\n"
         "📦 /bulk nom1 nom2 nom3 — rechercher plusieurs noms à la suite\n"
         "📋 Envoie un .txt avec la légende /fiches — parcourir les fiches avec ◀ ▶\n"
         "💬 Tape directement un texte pour rechercher."
@@ -268,6 +282,12 @@ async def handle_fiches_callback(update: Update, context: ContextTypes.DEFAULT_T
         index = max(0, index - 1)
     elif query.data == "fv_next":
         index = min(total - 1, index + 1)
+    elif query.data.startswith("fv_goto_"):
+        try:
+            index = int(query.data[len("fv_goto_"):])
+            index = max(0, min(index, total - 1))
+        except ValueError:
+            pass
     session["index"] = index
     session["fiches"] = fiches
     text = f"📋 Fiche {index + 1}/{total}\n\n{format_fiche(fiches[index])}"
@@ -328,6 +348,29 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(msg)
 
 
+async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("🔍 Usage : /search <nom ou numéro>")
+        return
+    query = " ".join(context.args)
+    chat_id = update.effective_chat.id
+    session = context.chat_data.get("fv") or context.bot_data.get("fv", {}).get(chat_id)
+    if not session or not session.get("fiches"):
+        await update.message.reply_text("❌ Aucune fiche chargée dans ce groupe. Envoie d'abord un fichier avec /fiches.")
+        return
+    results = _search_session(session["fiches"], query)
+    if not results:
+        await update.message.reply_text(f"🔍 Aucune fiche trouvée pour « {query} ».")
+        return
+    total = len(session["fiches"])
+    for idx, row in results:
+        text = f"📋 Fiche {idx + 1}/{total}\n\n{format_fiche(row)}"
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📌 Aller à cette fiche", callback_data=f"fv_goto_{idx}")
+        ]])
+        await update.message.reply_text(text, reply_markup=keyboard)
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _do_search(update, context, update.message.text.strip())
 
@@ -343,7 +386,8 @@ def main() -> None:
     app.add_handler(CommandHandler("bulk", bulk))
     app.add_handler(CommandHandler("fiches", fiches_cmd))
     app.add_handler(CommandHandler("clearfiches", clearfiches))
-    app.add_handler(CallbackQueryHandler(handle_fiches_callback, pattern="^fv_(prev|next|del)$"))
+    app.add_handler(CommandHandler("search", search_cmd))
+    app.add_handler(CallbackQueryHandler(handle_fiches_callback, pattern="^fv_(prev|next|del|goto_\\d+)$"))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling()
