@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {"key": "country",          "emoji": "🌍", "label": "Pays"},
+    {"key": "type",             "emoji": "🏷️", "label": "Type"},
+    {"key": "category",         "emoji": "📂", "label": "Catégorie"},
+    {"key": "issuer",           "emoji": "🏦", "label": "Émetteur"},
+    {"key": "number",           "emoji": "💳", "label": "Numéro"},
+    {"key": "expiration",       "emoji": "⏳", "label": "Expiration"},
+    {"key": "expiration_year",  "emoji": "📅", "label": "Année exp."},
+    {"key": "cvv",              "emoji": "🔒", "label": "CVV"},
+    {"key": "fullname",         "emoji": "👤", "label": "Nom complet",   "search": "text"},
+    {"key": "address",          "emoji": "🏠", "label": "Adresse"},
+    {"key": "zip",              "emoji": "📮", "label": "Code postal"},
+    {"key": "city",             "emoji": "🏙️", "label": "Ville",         "search": "text"},
+    {"key": "email",            "emoji": "📧", "label": "Email",         "search": "text"},
+    {"key": "phone",            "emoji": "📞", "label": "Téléphone",     "search": "digits"},
+    {"key": "dob",              "emoji": "🎂", "label": "Naissance"},
+    {"key": "dob_year",         "emoji": "🗓️", "label": "Année nais."},
+    {"key": "additional_infos", "emoji": "📝", "label": "Infos"},
+    {"key": "created_at",       "emoji": "⏱️", "label": "Créé le"}
+  ]
+}

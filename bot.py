@@ -1,6 +1,8 @@
 import csv
 import io
+import json
 import os
+import re
 import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -27,10 +29,40 @@ def chat_db(chat_id: int) -> str:
     init_db(path)
     return path
 ADMIN_IDS = [int(i) for i in os.getenv("ADMIN_ID", "").split(",") if i.strip()]
-COLUMNS = [
-    "nom", "prenom", "numero", "date_naissance",
-    "adresse", "code_postal", "ville", "email", "iban", "bic",
-]
+
+SCHEMA_PATH = os.getenv(
+    "SCHEMA_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.json")
+)
+
+# Column names go straight into SQL identifiers, so keep them to a safe subset.
+_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_RESERVED = {"id"}
+
+
+def load_schema(path: str = SCHEMA_PATH) -> list[dict]:
+    with open(path, encoding="utf-8") as fh:
+        fields = json.load(fh)["fields"]
+    if not fields:
+        raise ValueError("Le schéma ne contient aucun champ.")
+    seen = set()
+    for field in fields:
+        key = field["key"]
+        if not _KEY_RE.match(key):
+            raise ValueError(f"Clé invalide dans le schéma : {key!r}")
+        if key in _RESERVED:
+            raise ValueError(f"Clé réservée : {key!r}")
+        if key in seen:
+            raise ValueError(f"Clé dupliquée : {key!r}")
+        seen.add(key)
+    return fields
+
+
+SCHEMA = load_schema()
+COLUMNS = [f["key"] for f in SCHEMA]
+# Exact word match in the DB, substring match inside a loaded session.
+TEXT_SEARCH = [f["key"] for f in SCHEMA if f.get("search") == "text"]
+# Compared with spaces stripped on both sides (phone numbers, references…).
+DIGIT_SEARCH = [f["key"] for f in SCHEMA if f.get("search") == "digits"]
 
 
 def parse_line(line: str) -> dict:
@@ -47,6 +79,12 @@ def init_db(db_path: str = "fiches.db") -> None:
             {', '.join(f'{col} TEXT' for col in COLUMNS)}
         )"""
     )
+    # A DB created with an older schema keeps its columns; add whatever is new
+    # so an existing base survives a schema.json edit.
+    existing = {r[1] for r in con.execute("PRAGMA table_info(fiches)")}
+    for col in COLUMNS:
+        if col not in existing:
+            con.execute(f"ALTER TABLE fiches ADD COLUMN {col} TEXT")
     con.commit()
     con.close()
 
@@ -64,34 +102,42 @@ def insert_fiches(rows: list[dict], db_path: str = "fiches.db") -> int:
     return count
 
 
+def _like_escape(value: str) -> str:
+    for ch in ("\\", "%", "_"):
+        value = value.replace(ch, "\\" + ch)
+    return value
+
+
 def search_fiches(query: str, db_path: str = "fiches.db") -> list[dict]:
+    words = query.split()
+    if not words:
+        return []
+    clauses, params = [], []
+    if TEXT_SEARCH:
+        # Each word must appear in one of the text columns (AND between words),
+        # so a combined field like "Jean Dupont" is reachable word by word.
+        per_word = "(" + " OR ".join(f"{c} LIKE ? ESCAPE '\\'" for c in TEXT_SEARCH) + ")"
+        clauses.append("(" + " AND ".join(per_word for _ in words) + ")")
+        params += [f"%{_like_escape(w)}%" for w in words for _ in TEXT_SEARCH]
+    if DIGIT_SEARCH:
+        # Compare the full query (spaces stripped) against the stored value.
+        normalized = query.replace(" ", "")
+        clauses += [f"REPLACE({c}, ' ', '') = ?" for c in DIGIT_SEARCH]
+        params += [normalized] * len(DIGIT_SEARCH)
+    if not clauses:
+        return []
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    words = query.split()
-    normalized = query.replace(" ", "")
-    # Each word must match nom, prenom, or email (AND between words)
-    per_word = "(nom COLLATE NOCASE = ? OR prenom COLLATE NOCASE = ? OR email COLLATE NOCASE = ?)"
-    word_clause = " AND ".join(per_word for _ in words)
-    word_params = [w for w in words for _ in range(3)]
-    # Numero: compare full query (spaces stripped) against stored value (spaces stripped)
-    sql = f"SELECT * FROM fiches WHERE ({word_clause}) OR REPLACE(numero, ' ', '') = ? LIMIT 10"
-    cur = con.execute(sql, word_params + [normalized])
+    sql = f"SELECT * FROM fiches WHERE {' OR '.join(clauses)} LIMIT 10"
+    cur = con.execute(sql, params)
     rows = [dict(r) for r in cur.fetchall()]
     con.close()
     return rows
 
 
 _LABELS = {
-    "nom": "👤 Nom",
-    "prenom": "👤 Prénom",
-    "numero": "📞 Numéro",
-    "date_naissance": "🎂 Date de naissance",
-    "adresse": "🏠 Adresse",
-    "code_postal": "📮 Code postal",
-    "ville": "🏙️ Ville",
-    "email": "📧 Email",
-    "iban": "🏦 IBAN",
-    "bic": "🏦 BIC",
+    f["key"]: f"{f['emoji']} {f['label']}".strip() if f.get("emoji") else f["label"]
+    for f in SCHEMA
 }
 
 _USER_COLORS = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "🩷", "🩵", "🩶"]
@@ -126,13 +172,18 @@ def _viewer_keyboard(index: int, total: int) -> InlineKeyboardMarkup:
 
 def _search_session(fiches: list[dict], query: str) -> list[tuple[int, dict]]:
     q = query.lower().strip()
+    if not q:
+        return []
     q_no_space = q.replace(" ", "")
     results = []
     for i, f in enumerate(fiches):
-        num = (f.get("numero") or "").replace(" ", "")
-        nom = (f.get("nom") or "").lower()
-        prenom = (f.get("prenom") or "").lower()
-        if num == q_no_space or q in nom or q in prenom or q in f"{nom} {prenom}" or q in f"{prenom} {nom}":
+        if any((f.get(c) or "").replace(" ", "") == q_no_space for c in DIGIT_SEARCH):
+            results.append((i, f))
+            continue
+        values = [(f.get(c) or "").lower() for c in TEXT_SEARCH]
+        # Match a single field, or the fields joined in either order
+        # ("dupont jean" and "jean dupont" both hit).
+        if any(q in v for v in values) or q in " ".join(values) or q in " ".join(reversed(values)):
             results.append((i, f))
     return results
 
@@ -159,13 +210,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.args:
         await _do_search(update, context, " ".join(context.args))
         return
+    searchable = " | ".join(TEXT_SEARCH + DIGIT_SEARCH) or "—"
     await update.message.reply_text(
         "👋 Bienvenue !\n\n"
         "📁 Envoie un fichier .txt pour importer des fiches.\n"
-        "Format : nom,prenom,numero,date_naissance,adresse,code_postal,ville,email,iban,bic\n\n"
-        "🔍 /fiche <nom|prénom|numéro|email> — rechercher une fiche (base)\n"
-        "🔎 /search <nom|numéro> — retrouver une fiche chargée dans ce groupe\n"
-        "📦 /bulk nom1 nom2 nom3 — rechercher plusieurs noms à la suite\n"
+        f"Format : {','.join(COLUMNS)}\n\n"
+        f"🔍 /fiche <{searchable}> — rechercher une fiche (base)\n"
+        f"🔎 /search <{searchable}> — retrouver une fiche chargée dans ce groupe\n"
+        "📦 /bulk terme1 terme2 terme3 — rechercher plusieurs termes à la suite\n"
+        "🧩 /schema — afficher les champs configurés\n"
         "📋 Envoie un .txt avec la légende /fiches — parcourir les fiches avec ◀ ▶\n"
         "💬 Tape directement un texte pour rechercher."
     )
@@ -173,7 +226,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def fiche(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("🔍 Usage : /fiche <nom|prénom|numéro|email>")
+        searchable = " | ".join(TEXT_SEARCH + DIGIT_SEARCH) or "—"
+        await update.message.reply_text(f"🔍 Usage : /fiche <{searchable}>")
         return
     await _do_search(update, context, " ".join(context.args))
 
@@ -199,6 +253,18 @@ async def clearfiches(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     con.commit()
     con.close()
     await update.message.reply_text(f"🗑️ {count} fiche(s) supprimée(s) de ce groupe.")
+
+
+async def schema_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lines = []
+    for field in SCHEMA:
+        mark = {"text": " 🔍", "digits": " 🔢"}.get(field.get("search"), "")
+        lines.append(f"{_LABELS[field['key']]} → `{field['key']}`{mark}")
+    await update.message.reply_text(
+        f"🧩 Schéma actuel ({len(SCHEMA)} champs)\n\n"
+        + "\n".join(lines)
+        + "\n\n🔍 = recherche texte · 🔢 = recherche numérique"
+    )
 
 
 async def fiches_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -350,7 +416,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("🔍 Usage : /search <nom ou numéro>")
+        searchable = " ou ".join(TEXT_SEARCH + DIGIT_SEARCH) or "—"
+        await update.message.reply_text(f"🔍 Usage : /search <{searchable}>")
         return
     query = " ".join(context.args)
     chat_id = update.effective_chat.id
@@ -386,6 +453,7 @@ def main() -> None:
     app.add_handler(CommandHandler("bulk", bulk))
     app.add_handler(CommandHandler("fiches", fiches_cmd))
     app.add_handler(CommandHandler("clearfiches", clearfiches))
+    app.add_handler(CommandHandler("schema", schema_cmd))
     app.add_handler(CommandHandler("search", search_cmd))
     app.add_handler(CallbackQueryHandler(handle_fiches_callback, pattern="^fv_(prev|next|del|goto_\\d+)$"))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
