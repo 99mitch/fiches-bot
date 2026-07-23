@@ -2,20 +2,36 @@ import json
 
 import pytest
 
+import bot
 from bot import (
     COLUMNS,
     DIGIT_SEARCH,
+    CardFieldRejected,
     SCHEMA,
     TEXT_SEARCH,
+    _apply_schema,
+    _reject_if_card,
     _search_session,
+    _validate_fields,
     format_fiche,
     init_db,
     insert_fiches,
     load_schema,
     parse_line,
+    save_schema,
     search_fiches,
 )
 from generate_test_data import generate_rows
+
+
+@pytest.fixture
+def restore_schema():
+    """Snapshot the live schema and put it back after a test mutates it."""
+    saved = (bot.SCHEMA, bot.COLUMNS, bot.TEXT_SEARCH, bot.DIGIT_SEARCH, dict(bot._LABELS))
+    yield
+    (bot.SCHEMA, bot.COLUMNS, bot.TEXT_SEARCH, bot.DIGIT_SEARCH, bot._LABELS) = (
+        saved[0], saved[1], saved[2], saved[3], saved[4]
+    )
 
 
 def make_row(**overrides) -> dict:
@@ -272,6 +288,68 @@ def test_generated_phones_use_plausible_prefixes():
 def test_generated_created_at_seconds_vary():
     seconds = {row["created_at"][-2:] for row in generate_rows(40, seed=19)}
     assert len(seconds) > 1
+
+
+# --- édition de schéma à chaud ------------------------------------------
+
+
+def test_apply_schema_swaps_globals(restore_schema):
+    _apply_schema(SCHEMA + [{"key": "societe", "emoji": "🏢", "label": "Société", "search": "text"}])
+    assert "societe" in bot.COLUMNS
+    assert "societe" in bot.TEXT_SEARCH
+    assert bot._LABELS["societe"] == "🏢 Société"
+
+
+def test_apply_schema_remove_field(restore_schema):
+    _apply_schema([f for f in SCHEMA if f["key"] != "city"])
+    assert "city" not in bot.COLUMNS
+    assert "city" not in bot.TEXT_SEARCH
+
+
+def test_apply_schema_rejects_empty(restore_schema):
+    with pytest.raises(ValueError):
+        _apply_schema([])
+
+
+def test_save_schema_round_trip(tmp_path):
+    path = tmp_path / "s.json"
+    fields = [{"key": "societe", "emoji": "🏢", "label": "Société", "search": "text"}]
+    save_schema(fields, str(path))
+    assert load_schema(str(path)) == fields
+
+
+def test_save_schema_is_atomic(tmp_path):
+    path = tmp_path / "s.json"
+    save_schema([{"key": "a", "label": "A"}], str(path))
+    assert not (tmp_path / "s.json.tmp").exists()
+
+
+@pytest.mark.parametrize("key", ["cvv", "CVV", "cvc2", "pan", "card_number", "cardnumber", "cc"])
+def test_reject_card_keys(key):
+    with pytest.raises(CardFieldRejected):
+        _reject_if_card(key)
+
+
+def test_reject_card_by_label():
+    with pytest.raises(CardFieldRejected):
+        _reject_if_card("secure", "Numéro de carte bancaire")
+
+
+@pytest.mark.parametrize("key", ["fullname", "email", "societe", "reference", "numero_commande"])
+def test_allow_non_card_keys(key):
+    _reject_if_card(key)  # ne lève pas
+
+
+def test_validate_rejects_card_field():
+    with pytest.raises(CardFieldRejected):
+        _validate_fields([{"key": "cvv", "label": "CVV"}])
+
+
+def test_added_field_becomes_searchable(restore_schema, db):
+    _apply_schema(SCHEMA + [{"key": "societe", "emoji": "🏢", "label": "Société", "search": "text"}])
+    init_db(db)  # applique ALTER TABLE ADD COLUMN
+    insert_fiches([make_row(societe="Acme SARL")], db)
+    assert len(search_fiches("Acme", db)) == 1
 
 
 def test_search_treats_wildcards_literally(db):

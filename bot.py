@@ -38,23 +38,79 @@ SCHEMA_PATH = os.getenv(
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _RESERVED = {"id"}
 
+# Card-data field names are refused: storing a CVV/PAN is prohibited (PCI DSS)
+# and there is no legitimate reason to add such a column. This blocks the
+# obvious names — it is NOT a content check, since data can go in any column.
+_BLOCKED_KEYS = {
+    "cvv", "cvc", "cvv2", "cvc2", "cvn", "ccv", "cid",
+    "pan", "card", "cardnumber", "card_number", "ccnumber", "cc_number",
+    "cc", "ccnum", "track1", "track2", "track_data",
+}
+_BLOCKED_LABEL_RE = re.compile(
+    r"cvv|cvc|\bpan\b|carte bancaire|numéro de carte|card number|card no",
+    re.IGNORECASE,
+)
 
-def load_schema(path: str = SCHEMA_PATH) -> list[dict]:
-    with open(path, encoding="utf-8") as fh:
-        fields = json.load(fh)["fields"]
+
+class CardFieldRejected(ValueError):
+    """Raised when someone tries to add a card-data field."""
+
+
+def _reject_if_card(key: str, label: str = "") -> None:
+    if key.replace("_", "").replace(" ", "") in {k.replace("_", "") for k in _BLOCKED_KEYS} \
+            or key in _BLOCKED_KEYS or _BLOCKED_LABEL_RE.search(f"{key} {label}"):
+        raise CardFieldRejected(
+            "🚫 Champ de données de carte refusé (CVV / numéro de carte). "
+            "Stocker ces données est interdit."
+        )
+
+
+def _validate_fields(fields: list[dict]) -> list[dict]:
     if not fields:
         raise ValueError("Le schéma ne contient aucun champ.")
     seen = set()
     for field in fields:
         key = field["key"]
         if not _KEY_RE.match(key):
-            raise ValueError(f"Clé invalide dans le schéma : {key!r}")
+            raise ValueError(f"Clé invalide : {key!r}")
         if key in _RESERVED:
             raise ValueError(f"Clé réservée : {key!r}")
         if key in seen:
             raise ValueError(f"Clé dupliquée : {key!r}")
+        _reject_if_card(key, field.get("label", ""))
         seen.add(key)
     return fields
+
+
+def load_schema(path: str = SCHEMA_PATH) -> list[dict]:
+    with open(path, encoding="utf-8") as fh:
+        return _validate_fields(json.load(fh)["fields"])
+
+
+def save_schema(fields: list[dict], path: str = SCHEMA_PATH) -> None:
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"fields": fields}, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)  # atomic — never leaves a half-written schema
+
+
+def _apply_schema(fields: list[dict]) -> None:
+    """Validate then swap the live schema in — no process restart needed."""
+    global SCHEMA, COLUMNS, TEXT_SEARCH, DIGIT_SEARCH, _LABELS
+    _validate_fields(fields)
+    SCHEMA = fields
+    COLUMNS = [f["key"] for f in SCHEMA]
+    TEXT_SEARCH = [f["key"] for f in SCHEMA if f.get("search") == "text"]
+    DIGIT_SEARCH = [f["key"] for f in SCHEMA if f.get("search") == "digits"]
+    _LABELS = _build_labels(SCHEMA)
+
+
+def _build_labels(schema: list[dict]) -> dict:
+    return {
+        f["key"]: (f"{f['emoji']} {f['label']}".strip() if f.get("emoji") else f["label"])
+        for f in schema
+    }
 
 
 SCHEMA = load_schema()
@@ -135,10 +191,7 @@ def search_fiches(query: str, db_path: str = "fiches.db") -> list[dict]:
     return rows
 
 
-_LABELS = {
-    f["key"]: f"{f['emoji']} {f['label']}".strip() if f.get("emoji") else f["label"]
-    for f in SCHEMA
-}
+_LABELS = _build_labels(SCHEMA)
 
 _USER_COLORS = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "🩷", "🩵", "🩶"]
 
@@ -255,6 +308,75 @@ async def clearfiches(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(f"🗑️ {count} fiche(s) supprimée(s) de ce groupe.")
 
 
+def _is_admin(update: Update) -> bool:
+    # No admin configured → nobody may edit the schema (fail closed).
+    return bool(ADMIN_IDS) and update.effective_user.id in ADMIN_IDS
+
+
+async def addfield_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update):
+        await update.message.reply_text("🚫 Réservé aux administrateurs.")
+        return
+    args = list(context.args)
+    search = None
+    if args and args[0] in ("--text", "--digits"):
+        search = args[0][2:]
+        args = args[1:]
+    if len(args) < 3:
+        await update.message.reply_text(
+            "➕ Usage : /addfield [--text|--digits] <clé> <emoji> <label>\n"
+            "Ex : /addfield --text societe 🏢 Société"
+        )
+        return
+    key, emoji, label = args[0].lower(), args[1], " ".join(args[2:])
+    if key in COLUMNS:
+        await update.message.reply_text(f"⚠️ Le champ « {key} » existe déjà.")
+        return
+    field = {"key": key, "emoji": emoji, "label": label}
+    if search:
+        field["search"] = search
+    new_schema = SCHEMA + [field]
+    try:
+        _apply_schema(new_schema)
+    except CardFieldRejected as e:
+        await update.message.reply_text(str(e))
+        return
+    except ValueError as e:
+        await update.message.reply_text(f"❌ {e}")
+        return
+    save_schema(new_schema)
+    await update.message.reply_text(
+        f"✅ Champ ajouté : {_LABELS[key]} (`{key}`)\n"
+        f"Il sera ajouté aux bases au prochain accès. Total : {len(COLUMNS)} champs."
+    )
+
+
+async def removefield_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update):
+        await update.message.reply_text("🚫 Réservé aux administrateurs.")
+        return
+    if not context.args:
+        await update.message.reply_text("➖ Usage : /removefield <clé>")
+        return
+    key = context.args[0].lower()
+    if key not in COLUMNS:
+        await update.message.reply_text(f"⚠️ Champ inconnu : « {key} ».")
+        return
+    new_schema = [f for f in SCHEMA if f["key"] != key]
+    try:
+        _apply_schema(new_schema)
+    except ValueError as e:
+        # e.g. removing the last field
+        await update.message.reply_text(f"❌ Impossible : {e}")
+        return
+    save_schema(new_schema)
+    await update.message.reply_text(
+        f"✅ Champ « {key} » retiré du schéma.\n"
+        "Les données déjà stockées dans les bases sont conservées mais ne sont "
+        "plus affichées ; réajoute le champ pour les revoir."
+    )
+
+
 async def schema_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lines = []
     for field in SCHEMA:
@@ -264,6 +386,8 @@ async def schema_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"🧩 Schéma actuel ({len(SCHEMA)} champs)\n\n"
         + "\n".join(lines)
         + "\n\n🔍 = recherche texte · 🔢 = recherche numérique"
+        + "\n\n➕ /addfield [--text|--digits] <clé> <emoji> <label>"
+        + "\n➖ /removefield <clé>   (admins)"
     )
 
 
@@ -454,6 +578,8 @@ def main() -> None:
     app.add_handler(CommandHandler("fiches", fiches_cmd))
     app.add_handler(CommandHandler("clearfiches", clearfiches))
     app.add_handler(CommandHandler("schema", schema_cmd))
+    app.add_handler(CommandHandler("addfield", addfield_cmd))
+    app.add_handler(CommandHandler("removefield", removefield_cmd))
     app.add_handler(CommandHandler("search", search_cmd))
     app.add_handler(CallbackQueryHandler(handle_fiches_callback, pattern="^fv_(prev|next|del|goto_\\d+)$"))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
