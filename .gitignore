@@ -1,5 +1,9 @@
 .env
-fiches.db
+*.db
+*.csv
+*.txt
+!requirements.txt
+bot_persistence.pkl
 __pycache__/
 *.pyc
 .pytest_cache/
