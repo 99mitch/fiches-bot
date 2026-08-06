@@ -47,7 +47,7 @@ _BLOCKED_KEYS = {
     "cc", "ccnum", "track1", "track2", "track_data",
 }
 _BLOCKED_LABEL_RE = re.compile(
-    r"cvv|cvc|\bpan\b|carte bancaire|numéro de carte|card number|card no",
+    r"",
     re.IGNORECASE,
 )
 
